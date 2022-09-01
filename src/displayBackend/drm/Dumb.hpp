@@ -25,6 +25,10 @@
 #include <xen/be/Log.hpp>
 #include <xen/be/XenGnttab.hpp>
 
+#ifdef WITH_DMABUF_ZCOPY_GBM
+#include <gbm.h>
+#endif
+
 #include "DisplayItf.hpp"
 
 namespace Drm {
@@ -210,6 +214,63 @@ private:
 	void release();
 };
 
+#ifdef WITH_DMABUF_ZCOPY_GBM
+/***************************************************************************//**
+ * Provides DRM ZCopy mapping external buffer.
+ * @ingroup drm
+ ******************************************************************************/
+class DumbZCopyFrontMap : public DumbBase
+{
+public:
+
+	/**
+	 * @param drmFd    DRM file descriptor
+	 * @param width    dumb width
+	 * @param height   dumb height
+	 * @param bpp      bits per pixel
+	 * @param offset   offset of the data in the buffer
+	 */
+	DumbZCopyFrontMap(int drmFd,
+				   uint32_t width, uint32_t height, uint32_t bpp,
+				   size_t offset, domid_t domId,
+				   const GrantRefs& refs);
+
+	~DumbZCopyFrontMap();
+
+	/**
+	 * Get handle
+	 */
+	virtual uintptr_t getHandle() const override { return -1; }
+
+	/**
+	 * Gets fd
+	 */
+	int getFd() const override { return mBufZCopyFd; };
+
+protected:
+	std::unique_ptr<XenBackend::XenGnttabDmaBufferMapper> mGnttabBuffer;
+
+	struct gbm_device *mGBMDevice;
+	struct gbm_bo *mBo;
+	int mBufZCopyFd;
+
+private:
+	/**
+	 * Ideally this time-out should be less than the default
+	 * time-out used by the frontend driver to wait for our response
+	 */
+	const int cBufZCopyWaitHandleToMs = 2000;
+
+	void createDumb(uint32_t bpp, domid_t domId,
+					const GrantRefs& refs);
+
+	void init(uint32_t bpp, size_t offset, domid_t domId,
+			  const GrantRefs& refs);
+	void release();
+
+	uint32_t getFormatFromBpp(uint32_t bpp);
+};
+#endif /* WITH_DMABUF_ZCOPY_GBM */
 /***************************************************************************//**
  * Provides DRM ZCopy front DRM dumb functionality.
  * @ingroup drm

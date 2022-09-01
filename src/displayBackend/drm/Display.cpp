@@ -332,9 +332,15 @@ DisplayBufferPtr DisplayWayland::createDisplayBuffer(
 												  domId, refs));
 	}
 
+#ifdef WITH_DMABUF_ZCOPY_GBM
+	return DisplayBufferPtr(new DumbZCopyFrontMap(mDrmFd,
+											   width, height, bpp, offset,
+											   domId, refs));
+#else
 	return DisplayBufferPtr(new DumbZCopyFront(mDrmFd,
 											   width, height, bpp, offset,
 											   domId, refs));
+#endif
 }
 #endif
 
