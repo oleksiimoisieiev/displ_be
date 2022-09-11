@@ -22,6 +22,7 @@
 #include "Dumb.hpp"
 
 #include <sys/mman.h>
+#include <thread>
 
 #include <xf86drm.h>
 
@@ -38,7 +39,8 @@ using std::string;
 
 using XenBackend::XenGnttabBuffer;
 using XenBackend::XenGnttabDmaBufferImporter;
-
+using std::this_thread::sleep_for;
+using std::chrono::milliseconds;
 namespace Drm {
 
 /*******************************************************************************
@@ -305,6 +307,92 @@ DumbZCopyFrontDrm::~DumbZCopyFrontDrm()
 						  << mBufDrmHandle;
 	}
 }
+
+#ifdef WITH_DMABUF_ZCOPY_GBM
+/*******************************************************************************
+ * DumbZCopyFrontMap
+ ******************************************************************************/
+
+DumbZCopyFrontMap::DumbZCopyFrontMap(int drmFd,
+							   uint32_t width, uint32_t height, uint32_t bpp,
+							   size_t offset, domid_t domId,
+							   const GrantRefs& refs) :
+	DumbBase(drmFd, width, height),
+	mGnttabBuffer(nullptr)
+{
+	uint32_t pixelFormat = getFormatFromBpp(bpp);
+	mBackStride = 4 * ((width * bpp + 31) / 32);
+
+	mGBMDevice = gbm_create_device(mDrmFd);
+	if (!mGBMDevice) {
+		throw Exception("Can't create GBM device", ENOMEM);
+	}
+
+	mBo = gbm_bo_create(mGBMDevice, width, height, pixelFormat, GBM_BO_USE_RENDERING);
+	if (!mBo) {
+		throw Exception("Can't create GBM BO image", ENOMEM);
+	}
+
+	mBufZCopyFd = gbm_bo_get_fd(mBo);
+
+	mGnttabBuffer.reset(
+		new XenBackend::XenGnttabDmaBufferMapper(domId, mBufZCopyFd, refs, offset));
+
+	DLOG(mLog, DEBUG) << "Fd: " << mBufZCopyFd;
+}
+
+DumbZCopyFrontMap::~DumbZCopyFrontMap()
+{
+	int ret;
+	DLOG(mLog, DEBUG) << "Will delete ZCopy front dumb"
+					  << ", fd: " << mBufZCopyFd;
+
+	mGnttabBuffer->releaseBuffer();
+	close(mBufZCopyFd);
+    gbm_bo_destroy(mBo);
+	gbm_device_destroy(mGBMDevice);
+
+	ret = mGnttabBuffer->waitForReleased(cBufZCopyWaitHandleToMs);
+	if (ret < 0)
+	{
+		ret = errno;
+	}
+	if (ret && ret != ENOENT)
+	{
+		DLOG(mLog, ERROR) << "Wait for buffer failed, force releasing"
+						  << ", error: " << strerror(ret)
+						  << ", fd: " << mBufZCopyFd;
+	}
+
+	DLOG(mLog, DEBUG) << "Unmap ZCopy front"
+					  << ", fd: " << mBufZCopyFd;
+}
+
+/*******************************************************************************
+ * Private
+ ******************************************************************************/
+
+uint32_t DumbZCopyFrontMap::getFormatFromBpp(uint32_t bpp)
+{
+	switch (bpp)
+	{
+	case 8:
+		return GBM_FORMAT_C8;
+
+	case 16:
+		return GBM_FORMAT_YUYV;
+
+	case 24:
+		return GBM_FORMAT_RGB888;
+
+	case 32:
+		return GBM_FORMAT_XRGB8888;
+
+	default:
+		throw Exception("Invalid bpp", EINVAL);
+	}
+}
+#endif /* WITH_DMABUF_ZCOPY_GBM */
 
 /*******************************************************************************
  * DumbZCopyBack
